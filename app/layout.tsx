@@ -5,8 +5,8 @@ import './globals.css'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'YouCam VTO — Live Clothes Try-On',
-  description: 'Photorealistic virtual try-on powered by Perfect Corp YouCam API. Capture a selfie, upload a garment, and see yourself wearing it.',
+  title: 'YouCam Live VTO — Real-Time Clothes Try-On',
+  description: 'Live webcam try-on with MediaPipe Pose overlay + YouCam AI photorealistic render. Built for the YouCam API VTO Hackathon.',
 }
 
 export default function RootLayout({
@@ -16,7 +16,20 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={inter.className}>{children}</body>
+      <body className={inter.className}>
+        <script
+          type="importmap"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              imports: {
+                '@mediapipe/tasks-vision':
+                  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/+esm/index.mjs',
+              },
+            }),
+          }}
+        />
+        {children}
+      </body>
     </html>
   )
 }
