@@ -1,13 +1,22 @@
 /**
  * YouCam API client — Clothes Virtual Try-On (V4)
  * All calls are server-side only. The API key never reaches the browser.
+ * Env vars are read inside each function (not at module load) so the build
+ * doesn't crash when they're missing.
  */
 
-const BASE_URL = process.env.YOUCAM_BASE_URL || 'https://yce-api-01.makeupar.com'
-const API_KEY = process.env.YOUCAM_API_KEY
+const defaultBaseUrl = 'https://yce-api-01.makeupar.com'
 
-if (!API_KEY) {
-  console.warn('YOUCAM_API_KEY is not set. YouCam API calls will fail.')
+function getBaseUrl(): string {
+  return process.env.YOUCAM_BASE_URL || defaultBaseUrl
+}
+
+function getApiKey(): string {
+  const key = process.env.YOUCAM_API_KEY
+  if (!key) {
+    throw new Error('YOUCAM_API_KEY is not set. YouCam API calls will fail.')
+  }
+  return key
 }
 
 export interface YouCamFileUploadResponse {
@@ -45,10 +54,10 @@ export async function registerFileUpload(
   fileName: string,
   contentType: string
 ): Promise<{ fileId: string; uploadUrl: string }> {
-  const res = await fetch(`${BASE_URL}/s2s/v2.0/file`, {
+  const res = await fetch(`${getBaseUrl()}/s2s/v2.0/file`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${API_KEY}`,
+      Authorization: `Bearer ${getApiKey()}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -100,10 +109,10 @@ export async function createClothVTO(
   refFileId: string,
   garmentCategory: 'upper_body' | 'lower_body' | 'full_body' | 'outer' | 'shoes' | 'auto' = 'upper_body'
 ): Promise<string> {
-  const res = await fetch(`${BASE_URL}/s2s/v2.0/task/cloth-v4`, {
+  const res = await fetch(`${getBaseUrl()}/s2s/v2.0/task/cloth-v4`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${API_KEY}`,
+      Authorization: `Bearer ${getApiKey()}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -126,10 +135,10 @@ export async function createClothVTO(
  * Step 3: Poll task status until success or error.
  */
 export async function pollTaskStatus(taskId: string): Promise<YouCamTaskStatusResponse> {
-  const res = await fetch(`${BASE_URL}/s2s/v2.0/task/cloth-v4/${taskId}`, {
+  const res = await fetch(`${getBaseUrl()}/s2s/v2.0/task/cloth-v4/${taskId}`, {
     method: 'GET',
     headers: {
-      Authorization: `Bearer ${API_KEY}`,
+      Authorization: `Bearer ${getApiKey()}`,
     },
   })
 
