@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { Camera, Smartphone, Play, Loader2, Image } from 'lucide-react'
+import { Camera, Smartphone, Play, Loader2, Image, AlertCircle } from 'lucide-react'
 
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision'
 
@@ -15,6 +15,7 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null)
   const [garmentFile, setGarmentFile] = useState<File | null>(null)
   const [youCamResult, setYouCamResult] = useState<string | null>(null)
+  const [mediaPipeReady, setMediaPipeReady] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -25,10 +26,17 @@ export default function HomePage() {
   let isDisposed = false
 
   const startCamera = useCallback(async () => {
+    setError(null)
+    setStatusMsg('Requesting camera permission…')
     try {
-      setStatusMsg('Requesting camera permission…')
+      // Relaxed constraints — ask for HD but accept what the browser gives
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: 1280, height: 720, frameRate: 30 },
+        video: {
+          facingMode: 'user',
+          width: { ideal: 1280, min: 640 },
+          height: { ideal: 720, min: 480 },
+          frameRate: { ideal: 30, min: 15 },
+        },
       })
       streamRef.current = stream
       if (videoRef.current) {
@@ -37,11 +45,12 @@ export default function HomePage() {
       }
       setIsLive(true)
       setStep('live')
-      setError(null)
       isDisposed = false
-    } catch (err) {
-      setError('Camera access denied. Please allow camera permissions and try again.')
+    } catch (err: any) {
+      const msg = err?.message || String(err)
+      setError(`Camera access failed: ${msg}. Please allow camera access and try again.`)
       setStep('welcome')
+      setStatusMsg('')
     }
   }, [])
 
@@ -63,6 +72,7 @@ export default function HomePage() {
     setIsProcessing(false)
     setYouCamResult(null)
     setGarmentFile(null)
+    setMediaPipeReady(false)
     isDisposed = true
   }, [stopCamera])
 
@@ -87,9 +97,10 @@ export default function HomePage() {
       canvas.height = video.videoHeight || 360
       ctx.drawImage(video, 0, 0)
 
-      const blob = await new Promise<Blob>((resolve) => {
-        canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.85)
+      const blob = await new Promise<Blob | null>((resolve) => {
+        canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.85)
       })
+      if (!blob) return
 
       const formData = new FormData()
       formData.append('image', blob, 'frame.jpg')
@@ -106,8 +117,8 @@ export default function HomePage() {
       } else {
         setStatusMsg(data.message || 'Processing…')
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'YouCam request failed'
+    } catch (err: any) {
+      const msg = err?.message || 'YouCam request failed'
       setStatusMsg(msg)
       setError(msg)
     } finally {
@@ -116,33 +127,42 @@ export default function HomePage() {
   }, [garmentFile, isProcessing])
 
   useEffect(() => {
-    if (step !== 'live' || isDisposed) return
+    if (step !== 'live') return
 
     let visionRunning = false
+    let cancelled = false
 
     const initVision = async () => {
       try {
-        setStatusMsg('Loading MediaPipe Pose…')
+        setStatusMsg('Loading MediaPipe Pose model…')
         const vision = await FilesetResolver.forVisionTasks(
           'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
         )
         const landmarker = await PoseLandmarker.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task' },
+          baseOptions: {
+            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
+          },
           runningMode: 'VIDEO',
           numPoses: 1,
           minPoseDetectionConfidence: 0.5,
           minTrackingConfidence: 0.5,
         })
+        if (cancelled) return
         poseLandmarkerRef.current = landmarker
-      } catch (err) {
+        setMediaPipeReady(true)
+        setStatusMsg('MediaPipe Pose ready')
+      } catch (err: any) {
+        if (cancelled) return
         console.error('MediaPipe init failed', err)
+        setError(`MediaPose failed to load: ${err?.message || String(err)}`)
+        setStatusMsg('')
       }
     }
 
     void initVision()
 
     const drawLoop = () => {
-      if (isDisposed || step !== 'live') return
+      if (isDisposed || step !== 'live' || cancelled) return
       const video = videoRef.current
       const canvas = canvasRef.current
       const landmarker = poseLandmarkerRef.current
@@ -162,10 +182,10 @@ export default function HomePage() {
         visionRunning = true
         landmarker.detectForVideo(video, performance.now(), (result) => {
           visionRunning = false
+          if (cancelled) return
           try {
             if (result.landmarks && result.landmarks[0]) {
               const lm = result.landmarks[0]
-              // Shoulders: 11 (left), 12 (right); hips: 23 (left), 24 (right)
               const lShoulder = lm[11]
               const rShoulder = lm[12]
               const lHip = lm[23]
@@ -213,6 +233,7 @@ export default function HomePage() {
     }
 
     return () => {
+      cancelled = true
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
       if (frameIntervalRef.current) clearInterval(frameIntervalRef.current)
     }
@@ -270,7 +291,10 @@ export default function HomePage() {
               <Play className="w-5 h-5" /> Start Live Camera
             </button>
             {error && (
-              <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>
+              <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <span>{error}</span>
+              </div>
             )}
           </div>
         )}
@@ -280,6 +304,13 @@ export default function HomePage() {
             <div className="relative w-full max-w-lg aspect-video bg-gray-900 rounded-xl overflow-hidden shadow-2xl border-2 border-gray-200 dark:border-gray-700">
               <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover transform scaleX(-1)" />
               <canvas ref={canvasRef} className="absolute inset-0 w-full h-full transform scaleX(-1)" />
+
+              {!mediaPipeReady && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/80">
+                  <Loader2 className="w-8 h-8 text-white animate-spin mb-2" />
+                  <p className="text-white text-sm">Loading MediaPipe Pose model…</p>
+                </div>
+              )}
 
               <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1 rounded-full bg-green-500/90 text-white text-xs font-bold animate-pulse">
                 <span className="w-2 h-2 rounded-full bg-white animate-pulse" /> LIVE
@@ -349,7 +380,10 @@ export default function HomePage() {
 
               {statusMsg && <div className="text-xs text-gray-500 dark:text-gray-400">{statusMsg}</div>}
               {error && (
-                <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>
+                <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>{error}</span>
+                </div>
               )}
             </div>
           </div>
