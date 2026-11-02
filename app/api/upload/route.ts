@@ -20,8 +20,8 @@ export async function POST(req: NextRequest) {
     const { fileId, uploadUrl } = await registerFileUpload(fileName, contentType)
 
     // Step 2: Upload bytes to the presigned URL
-    const buffer = Buffer.from(fileData, 'base64')
-    await uploadFileBytes(uploadUrl, buffer, contentType)
+    const buffer = Buffer.from(fileData as string, 'base64')
+    await uploadFileBytes(uploadUrl, buffer.buffer as ArrayBuffer, contentType)
 
     return NextResponse.json({ fileId })
   } catch (err) {

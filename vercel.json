@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "app/api/upload/route.ts": {
+      "maxDuration": 30
+    },
+    "app/api/tryon/route.ts": {
+      "maxDuration": 30
+    },
+    "app/api/task/[taskId]/route.ts": {
+      "maxDuration": 10
+    }
+  }
+}

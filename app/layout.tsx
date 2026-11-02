@@ -16,20 +16,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={inter.className}>
-        <script
-          type="importmap"
-          dangerouslySetInnerHTML={{
-            __html: JSON.stringify({
-              imports: {
-                '@mediapipe/tasks-vision':
-                  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/+esm/index.mjs',
-              },
-            }),
-          }}
-        />
-        {children}
-      </body>
+      <body className={inter.className}>{children}</body>
     </html>
   )
 }
