@@ -16,9 +16,10 @@ export default function HomePage() {
   const [garmentFile, setGarmentFile] = useState<File | null>(null)
   const [youCamResult, setYouCamResult] = useState<string | null>(null)
   const [mediaPipeReady, setMediaPipeReady] = useState(false)
+  const [videoReady, setVideoReady] = useState(false)
 
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const rafRef = useRef<number | null>(null)
   const frameIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -29,26 +30,46 @@ export default function HomePage() {
     setError(null)
     setStatusMsg('Requesting camera permission…')
     try {
-      // Relaxed constraints — ask for HD but accept what the browser gives
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: 'user',
-          width: { ideal: 1280, min: 640 },
-          height: { ideal: 720, min: 480 },
+          width: { ideal: 1280, min: 320 },
+          height: { ideal: 720, min: 240 },
           frameRate: { ideal: 30, min: 15 },
         },
       })
       streamRef.current = stream
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        await videoRef.current.play()
+
+      const video = videoRef.current
+      if (video) {
+        video.srcObject = stream
+        try {
+          await video.play()
+          setVideoReady(true)
+        } catch (playErr) {
+          console.error('Video play failed:', playErr)
+          setError('Camera started but video playback failed. Try refreshing the page.')
+          setStep('welcome')
+          return
+        }
+      } else {
+        setError('Video element not found. Please refresh and try again.')
+        setStep('welcome')
+        return
       }
+
       setIsLive(true)
       setStep('live')
       isDisposed = false
     } catch (err: any) {
-      const msg = err?.message || String(err)
-      setError(`Camera access failed: ${msg}. Please allow camera access and try again.`)
+      const msg = err?.name === 'NotAllowedError'
+        ? 'Camera access was denied. Please allow camera access in your browser and try again.'
+        : err?.name === 'NotFoundError'
+          ? 'No camera found on this device.'
+          : err?.name === 'NotReadableError'
+            ? 'Camera is in use by another application.'
+            : err?.message || String(err)
+      setError(`Camera access failed: ${msg}`)
       setStep('welcome')
       setStatusMsg('')
     }
@@ -61,8 +82,12 @@ export default function HomePage() {
       streamRef.current.getTracks().forEach((t) => t.stop())
       streamRef.current = null
     }
-    if (videoRef.current) videoRef.current.srcObject = null
+    const video = videoRef.current
+    if (video) {
+      video.srcObject = null
+    }
     setIsLive(false)
+    setVideoReady(false)
   }, [])
 
   const restart = useCallback(() => {
@@ -73,6 +98,7 @@ export default function HomePage() {
     setYouCamResult(null)
     setGarmentFile(null)
     setMediaPipeReady(false)
+    setVideoReady(false)
     isDisposed = true
   }, [stopCamera])
 
@@ -187,12 +213,13 @@ export default function HomePage() {
         if (cancelled) return
         poseLandmarkerRef.current = landmarker
         setMediaPipeReady(true)
-        setStatusMsg('MediaPipe Pose ready')
+        setStatusMsg('MediaPipe Pose ready — camera live')
       } catch (err: any) {
         if (cancelled) return
         console.error('MediaPipe init failed', err)
-        setError(`MediaPose failed to load: ${err?.message || String(err)}`)
-        setStatusMsg('')
+        // Non-fatal: camera still works, just no pose overlay
+        setMediaPipeReady(false)
+        setStatusMsg('Camera live (pose overlay unavailable)')
       }
     }
 
@@ -203,19 +230,20 @@ export default function HomePage() {
       const video = videoRef.current
       const canvas = canvasRef.current
       const landmarker = poseLandmarkerRef.current
-      if (!video || !canvas || !landmarker || !video.videoWidth) {
+
+      if (!video || !canvas || !video.videoWidth) {
         rafRef.current = requestAnimationFrame(drawLoop)
         return
       }
 
-      canvas.width = video.videoWidth
-      canvas.height = video.videoHeight
       const ctx = canvas.getContext('2d')
       if (!ctx) { rafRef.current = requestAnimationFrame(drawLoop); return }
 
+      canvas.width = video.videoWidth
+      canvas.height = video.videoHeight
       ctx.drawImage(video, 0, 0)
 
-      if (!visionRunning && landmarker) {
+      if (!visionRunning && landmarker && mediaPipeReady) {
         visionRunning = true
         landmarker.detectForVideo(video, performance.now(), (result) => {
           visionRunning = false
@@ -249,6 +277,9 @@ export default function HomePage() {
                   ctx.restore()
                   URL.revokeObjectURL(img.src)
                 }
+                img.onerror = () => {
+                  URL.revokeObjectURL(img.src)
+                }
               }
             }
           } catch (e) {
@@ -274,7 +305,7 @@ export default function HomePage() {
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
       if (frameIntervalRef.current) clearInterval(frameIntervalRef.current)
     }
-  }, [step, garmentFile, sendFrameToYouCam, isDisposed])
+  }, [step, garmentFile, sendFrameToYouCam, isDisposed, mediaPipeReady])
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex flex-col">
@@ -339,10 +370,23 @@ export default function HomePage() {
         {step === 'live' && (
           <div className="flex flex-col lg:flex-row gap-8 items-start lg:items-center justify-center min-h-[70vh]">
             <div className="relative w-full max-w-lg aspect-video bg-gray-900 rounded-xl overflow-hidden shadow-2xl border-2 border-gray-200 dark:border-gray-700">
-              <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover transform scaleX(-1)" />
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover transform scaleX(-1)"
+              />
               <canvas ref={canvasRef} className="absolute inset-0 w-full h-full transform scaleX(-1)" />
 
-              {!mediaPipeReady && (
+              {!videoReady && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/90">
+                  <Loader2 className="w-8 h-8 text-white animate-spin mb-2" />
+                  <p className="text-white text-sm">Starting camera…</p>
+                </div>
+              )}
+
+              {!mediaPipeReady && videoReady && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/80">
                   <Loader2 className="w-8 h-8 text-white animate-spin mb-2" />
                   <p className="text-white text-sm">Loading MediaPipe Pose model…</p>
