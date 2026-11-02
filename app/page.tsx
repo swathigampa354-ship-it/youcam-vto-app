@@ -102,20 +102,57 @@ export default function HomePage() {
       })
       if (!blob) return
 
+      // Step 1: Send frame + garment to YouCam, get taskId
       const formData = new FormData()
       formData.append('image', blob, 'frame.jpg')
-      if (garmentFile) formData.append('garment', garmentFile, garmentFile.name)
+      formData.append('garment', garmentFile, garmentFile.name)
 
       const res = await fetch('/api/tryon', { method: 'POST', body: formData })
       const data = await res.json()
 
       if (!res.ok) throw new Error(data.error || 'YouCam try-on failed')
+      if (!data.taskId) throw new Error('No taskId returned from YouCam')
 
-      if (data.resultUrl) {
-        setYouCamResult(data.resultUrl)
+      setStatusMsg('YouCam AI processing… (this may take 30–60s)')
+
+      // Step 2: Poll task status until success
+      let resultUrl: string | null = null
+      let delay = 1000
+      const maxDelay = 8000
+      const maxAttempts = 40 // ~2 minutes max
+
+      for (let i = 0; i < maxAttempts; i++) {
+        if (isDisposed) return
+
+        const statusRes = await fetch(`/api/task/${data.taskId}`)
+        const status = await statusRes.json()
+
+        if (!statusRes.ok) throw new Error(status.error || 'Task poll failed')
+
+        if (status.task_status === 'success') {
+          resultUrl =
+            status.result?.url ||
+            status.result?.image_url ||
+            status.result?.download_url ||
+            null
+          break
+        }
+
+        if (status.task_status === 'error' || status.task_status === 'failed') {
+          throw new Error(`YouCam task failed: ${status.error || 'unknown error'}`)
+        }
+
+        // still pending — wait and retry
+        setStatusMsg(`YouCam AI processing… (${Math.round((i / maxAttempts) * 100)}%)`)
+        await new Promise((resolve) => setTimeout(resolve, delay))
+        delay = Math.min(delay * 1.5, maxDelay)
+      }
+
+      if (resultUrl) {
+        setYouCamResult(resultUrl)
         setStatusMsg('YouCam AI render ready')
       } else {
-        setStatusMsg(data.message || 'Processing…')
+        throw new Error('YouCam task timed out — no result within 2 minutes')
       }
     } catch (err: any) {
       const msg = err?.message || 'YouCam request failed'
